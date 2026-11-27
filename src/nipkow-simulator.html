@@ -1,0 +1,136 @@
+<div id="nipkow-sim-v1">
+  <h1>Телевизор Нипкова</h1>
+  <p class="text-small">Запустите диск, совместите скорость и фазу, затем попробуйте изменить обороты.</p>
+  <div class="viz-controls">
+    <button type="button" class="btn btn-primary" data-act="run">Пуск</button>
+    <button type="button" class="btn" data-act="sync">Синхронизировать</button>
+    <label class="form-label">Картинка
+      <select class="form-select" data-id="pattern"><option value="letter">Буква А</option><option value="face">Лицо</option><option value="bars">Полосы</option><option value="image" hidden>Своя картинка</option></select>
+    </label>
+    <label class="form-label">Своя картинка<input type="file" accept="image/*" class="form-control" data-id="upload"></label>
+    <label class="form-label">Ход времени<select class="form-select" data-id="time"><option value="0.05">×0,05</option><option value="0.2" selected>×0,2</option><option value="1">×1</option></select></label>
+  </div>
+  <div class="viz-controls ns-sliders">
+    <label class="form-label"><span>Обороты диска: <output data-id="target" class="tabular-nums">750</output> об/мин</span><input class="form-range" data-id="speed" type="range" min="600" max="900" step="0.5" value="750"></label>
+    <label class="form-label"><span>Уровень сигнала: <output data-id="gainvalue" class="tabular-nums">100</output> %</span><input class="form-range" data-id="gain" type="range" min="0" max="200" step="1" value="100"></label>
+  </div>
+  <div class="ns-views">
+    <section><div class="viz-row"><h3>Диск со спиралью отверстий</h3><span class="text-small tabular-nums" data-id="rpm">0 об/мин</span></div><canvas data-id="disc" role="img" aria-label="Вращающийся диск с 32 отверстиями и смотровым окном у верхнего края"></canvas></section>
+    <section><div class="viz-row"><h3>Картинка в смотровом окне</h3><span class="text-small">Увеличено · 32 строки</span></div><canvas data-id="screen" role="img" aria-label="Изображение, восстановленное из последовательности яркостей; при расхождении скоростей картинка искажается"></canvas></section>
+  </div>
+  <div class="viz-row"><span class="text-small">Сигнал яркости</span><span class="text-small tabular-nums">12,5 кадра/с · синхронная скорость 750 об/мин</span></div>
+  <canvas data-id="wave" role="img" aria-label="Фрагмент последовательности яркостей выбранного изображения"></canvas>
+  <div class="text-small" aria-live="polite" data-id="status">Диск остановлен.</div>
+  <p class="text-small">Учебная модель: сигнал яркости строится из выбранной картинки. Звуковой файл здесь не декодируется.</p>
+</div>
+<style>
+#nipkow-sim-v1{display:grid;gap:calc(var(--font-size-base,14px)*1);color:var(--foreground);font-weight:400}
+#nipkow-sim-v1 .ns-views{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--font-size-base,14px)*1.5)}
+#nipkow-sim-v1 section{min-width:0;display:grid;gap:calc(var(--font-size-base,14px)*.5)}
+#nipkow-sim-v1 canvas{display:block;width:100%;height:auto}
+#nipkow-sim-v1 canvas[data-id="disc"],#nipkow-sim-v1 canvas[data-id="screen"]{aspect-ratio:1.15}
+#nipkow-sim-v1 canvas[data-id="wave"]{height:52px}
+#nipkow-sim-v1 .ns-sliders>label{flex:1;min-width:220px}
+@media(max-width:580px){#nipkow-sim-v1 .ns-views{grid-template-columns:1fr}#nipkow-sim-v1 .ns-sliders>label{min-width:0;width:100%}}
+</style>
+<style>
+:root {color-scheme:dark;--font-size-base:16px;--background:#0b1018;--foreground:#e9edf5;--card:#131d2b;--card-foreground:#e9edf5;--primary:#e9edf5;--primary-foreground:#0b1018;--secondary:#1c2b3d;--secondary-foreground:#e9edf5;--muted:#182434;--muted-foreground:#a9b8cb;--border:#34465d;--input:#172334;--ring:#8ebeff;--accent:#223650;--accent-foreground:#e9edf5;--viz-series-1:#8ebeff;--blue:#8ebeff;--destructive:#ff9292;}
+html,body{background:var(--background)!important;color:var(--foreground);}
+body{max-width:1220px;margin:0 auto!important;padding:clamp(16px,4vw,48px)!important;}
+html>body{background:var(--background)!important;}
+#nipkow-sim-v1{--font-size-base:16px;}
+#nipkow-sim-v1 h1{font-weight:500;}
+#nipkow-sim-v1 .ns-views{gap:28px;}
+#nipkow-sim-v1 [data-id="status"]{color:var(--viz-series-1);min-height:1.5em;}
+#nipkow-sim-v1 .form-label {color:var(--foreground);}
+#nipkow-sim-v1 canvas{touch-action:pan-y;}
+@media(max-width:580px){body{padding:16px!important;}#nipkow-sim-v1 .ns-views{gap:20px;}}
+</style>
+<script>
+(()=>{
+ const root=document.getElementById('nipkow-sim-v1');if(!root)return;
+ const q=id=>root.querySelector('[data-id="'+id+'"]');
+ const cv={disc:q('disc'),screen:q('screen'),wave:q('wave')};
+ const contexts=Object.fromEntries(Object.entries(cv).map(([k,c])=>[k,c.getContext('2d')]));
+ const N=32,C=48,FPS=12.5,nominal=750,TAU=.16;
+ const source=new Float32Array(N*C), phosphor=new Float32Array(N*C);
+ const tiny=document.createElement('canvas');tiny.width=C;tiny.height=N;const tg=tiny.getContext('2d',{willReadFrequently:true});
+ let running=false,rpm=0,target=750,gain=1,scale=.2,tx=0,rx=0,last=0,theme={},announced=0,drawn=0;
+ let fileImage=null,frameCount=0;
+ const fractions=x=>((x%1)+1)%1;
+ function readTheme(){const st=getComputedStyle(root);const probe=document.createElement('span');root.appendChild(probe);const v=(n,f)=>{probe.style.color='var('+n+','+f+')';return getComputedStyle(probe).color;};
+ theme={bg:v('--background','Canvas'),fg:v('--foreground','CanvasText'),muted:v('--muted-foreground','GrayText'),surface:v('--muted','ButtonFace'),border:v('--border','GrayText'),signal:v('--viz-series-1','var(--blue,Highlight)'),font:st.fontFamily,base:parseFloat(st.getPropertyValue('--font-size-base'))||14};probe.remove();
+ const a=colorRGB(theme.bg),b=colorRGB(theme.fg),sum=x=>x[0]+x[1]+x[2];theme.offRGB=sum(a)<sum(b)?a:b;theme.onRGB=sum(a)<sum(b)?b:a;theme.dark=sum(a)<sum(b)?theme.bg:theme.fg;
+ }
+ function colorRGB(css){const a=document.createElement('canvas').getContext('2d');a.fillStyle=css;a.fillRect(0,0,1,1);return Array.from(a.getImageData(0,0,1,1).data).slice(0,3);}
+ function dimensions(c){const w=Math.max(160,c.clientWidth),h=c===cv.wave?52:w/1.15,dpr=Math.min(devicePixelRatio||1,2);if(c.width!==Math.round(w*dpr)||c.height!==Math.round(h*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);}const g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);return[w,h,g];}
+ function save(){const state={modelContent:{pattern:q('pattern').value,targetRPM:target,signalPercent:Math.round(gain*100),timeScale:scale,lines:N},privateContent:null};try{localStorage.setItem('nipkow-preferences-v1',JSON.stringify(state));}catch{}}
+ function applyState(state){const d=state?.modelContent;if(!d)return;target=Math.max(600,Math.min(900,Number(d.targetRPM)||750));gain=Math.max(0,Math.min(2,(Number.isFinite(Number(d.signalPercent)) ? Number(d.signalPercent) : 100)/100));scale=[.05,.2,1].includes(Number(d.timeScale))?Number(d.timeScale):.2;q('speed').value=target;q('gain').value=Math.round(gain*100);q('time').value=scale;if(['letter','face','bars'].includes(d.pattern))q('pattern').value=d.pattern;updateLabels();makeSource();}
+ function updateLabels(){q('target').textContent=target.toLocaleString('ru-RU',{maximumFractionDigits:1});q('gainvalue').textContent=Math.round(gain*100);q('rpm').textContent=rpm.toLocaleString('ru-RU',{maximumFractionDigits:1})+' об/мин';}
+ function makeSource(){
+  tg.fillStyle='rgb(0,0,0)';tg.fillRect(0,0,C,N);tg.fillStyle='rgb(255,255,255)';
+  const p=q('pattern').value;
+  if(p==='letter'){
+   const rows=['0011100','0110110','1100011','1100011','1111111','1100011','1100011','1100011'];
+   for(let y=0;y<8;y++)for(let x=0;x<7;x++)if(rows[y][x]==='1')tg.fillRect(10+x*4,4+y*3,4,3);
+  }else if(p==='face'){
+   tg.beginPath();tg.ellipse(24,16,12,14,0,0,Math.PI*2);tg.fill();tg.fillStyle='rgb(0,0,0)';tg.fillRect(17,10,4,3);tg.fillRect(28,10,4,3);tg.fillRect(23,15,2,5);tg.fillRect(18,23,13,2);tg.fillRect(16,21,3,3);tg.fillRect(30,21,3,3);
+  }else if(p==='bars'){
+   for(let i=0;i<6;i++){let b=Math.round((i+1)/6*255);tg.fillStyle='rgb('+b+','+b+','+b+')';tg.fillRect(i*8,0,8,N);}tg.fillStyle='rgb(0,0,0)';tg.fillRect(0,13,C,5);
+  }else if(fileImage){let f=Math.min(C/fileImage.width,N/fileImage.height);tg.drawImage(fileImage,(C-fileImage.width*f)/2,(N-fileImage.height*f)/2,fileImage.width*f,fileImage.height*f);}
+  const data=tg.getImageData(0,0,C,N).data;for(let i=0;i<source.length;i++)source[i]=(.2126*data[i*4]+.7152*data[i*4+1]+.0722*data[i*4+2])/255;
+  phosphor.fill(0);
+ }
+ function advance(realDt){
+  if(!running)return;
+  rpm+=(target-rpm)*(1-Math.exp(-realDt/0.6));if(Math.abs(target-rpm)<.01)rpm=target;
+  const dt=realDt*scale,txNext=tx+FPS*dt,rxNext=rx+rpm/60*dt;
+  const decay=Math.exp(-dt/TAU);for(let i=0;i<phosphor.length;i++)phosphor[i]*=decay;
+  // Oversample the moving aperture, then deposit the source waveform at the receiver's position.
+  const count=Math.max(1,Math.ceil(Math.max(FPS,rpm/60)*dt*N*C*2));
+  for(let i=0;i<count;i++){
+   const u=(i+.5)/count,t=tx+(txNext-tx)*u,r=rx+(rxNext-rx)*u;
+   const si=Math.floor(fractions(t)*N*C),di=Math.floor(fractions(r)*N*C);
+   if(rpm>.5)phosphor[di]=Math.min(1,source[si]*gain);
+  }
+  frameCount+=Math.floor(rxNext)-Math.floor(rx);tx=txNext;rx=rxNext;
+ }
+ function prepareScreenImage(){const im=tg.createImageData(C,N),fg=theme.onRGB,bg=theme.offRGB;for(let i=0;i<phosphor.length;i++){let b=Math.max(0,Math.min(1,phosphor[i]));b=Math.pow(b,.65);for(let k=0;k<3;k++)im.data[i*4+k]=Math.round(bg[k]*(1-b)+fg[k]*b);im.data[i*4+3]=255;}tg.putImageData(im,0,0);}
+ function drawDisc(){const[w,h,g]=dimensions(cv.disc);g.clearRect(0,0,w,h);const r=Math.min(w*.385,h*.43),x=w*.49,y=h*.53;
+  g.fillStyle=theme.surface;g.strokeStyle=theme.border;g.lineWidth=1;g.beginPath();g.arc(x,y,r,0,Math.PI*2);g.fill();g.stroke();
+  const angle=fractions(rx)*Math.PI*2;
+  g.fillStyle=theme.fg;
+  for(let i=0;i<N;i++){const a=-Math.PI/2-i*2*Math.PI/N+angle,rr=r*(.87-i*.0063);g.beginPath();g.arc(x+Math.cos(a)*rr,y+Math.sin(a)*rr,Math.max(1.8,r*.010),0,Math.PI*2);g.fill();}
+  g.beginPath();g.arc(x,y,r*.065,0,Math.PI*2);g.fill();
+  // The aperture is a small sector at the upper rim. One spiral hole passes at a time.
+  const inner=r*(.87-(N-1)*.0063)-r*.015,outer=r*.89,delta=2*Math.PI/N;
+  const ax=x-2,ay=y-outer-2,aw=Math.sin(delta)*outer+4,ah=outer-inner*Math.cos(delta)+5;
+  g.fillStyle=theme.bg;g.globalAlpha=.82;g.fillRect(ax,ay,aw,ah);g.globalAlpha=1;g.strokeStyle=theme.signal;g.lineWidth=1.5;g.strokeRect(ax,ay,aw,ah);
+  const row=Math.floor(fractions(rx)*N),u=fractions(rx*N),rr=r*(.87-row*.0063),aa=-Math.PI/2+u*delta;
+  const bright=Math.min(1,source[Math.floor(fractions(tx)*source.length)]*gain);
+  if(rpm>.5&&running){g.fillStyle=theme.signal;g.globalAlpha=.15+.85*bright;g.beginPath();g.arc(x+Math.cos(aa)*rr,y+Math.sin(aa)*rr,Math.max(2,r*.013),0,Math.PI*2);g.fill();g.globalAlpha=1;}
+  g.font='400 '+theme.base+'px '+theme.font;g.fillStyle=theme.muted;g.textAlign='left';g.fillText('Смотровое окно',Math.max(8,x-r),Math.max(18,ay-12));g.strokeStyle=theme.border;g.lineWidth=1;g.beginPath();g.moveTo(x-r+130,ay-14);g.lineTo(ax+aw/2,ay-3);g.stroke();
+  g.textAlign='center';g.fillText((w<380?N+' отверстия · 1 оборот = кадр':N+' отверстия · один оборот — один кадр'),w/2,h-7);
+ }
+ function drawScreen(){const[w,h,g]=dimensions(cv.screen);g.clearRect(0,0,w,h);let ww=w*.86,hh=ww*N/C;if(hh>h*.82){hh=h*.82;ww=hh*C/N;}const ox=(w-ww)/2,oy=(h-hh)/2;g.fillStyle=theme.dark;g.fillRect(ox,oy,ww,hh);g.imageSmoothingEnabled=false;g.drawImage(tiny,ox,oy,ww,hh);
+  if(running&&rpm>.5){const phase=fractions(rx)*N,row=Math.floor(phase),col=fractions(phase)*C;g.strokeStyle=theme.fg;g.lineWidth=1;g.globalAlpha=.35;g.beginPath();g.moveTo(ox,oy+(row+.5)*hh/N);g.lineTo(ox+ww,oy+(row+.5)*hh/N);g.stroke();g.globalAlpha=1;g.fillStyle=theme.fg;g.fillRect(ox+col*ww/C,oy+row*hh/N,Math.max(2,ww/C),hh/N);}
+  g.strokeStyle=theme.border;g.lineWidth=1;g.strokeRect(ox-.5,oy-.5,ww+1,hh+1);
+  g.font='400 '+theme.base+'px '+theme.font;g.fillStyle=theme.muted;g.textAlign='center';g.fillText(w<380?'Строки выпрямлены':'Строки выпрямлены для наглядности',w/2,h-7);
+ }
+ function drawWave(){const[w,h,g]=dimensions(cv.wave);g.clearRect(0,0,w,h);g.strokeStyle=theme.border;g.lineWidth=1;g.beginPath();g.moveTo(0,h-6);g.lineTo(w,h-6);g.stroke();g.strokeStyle=theme.signal;g.lineWidth=1.5;g.beginPath();const start=Math.floor(fractions(tx)*source.length);for(let x=0;x<w;x++){const i=(start+Math.floor(x/w*C*3))%source.length,v=Math.min(1,source[i]*gain),y=h-7-v*(h-14);if(x===0)g.moveTo(x,y);else g.lineTo(x,y);}g.stroke();}
+ function status(){const difference=rpm-nominal;let s;if(!running)s=rpm>.5?'Пауза.':'Диск остановлен.';else if(Math.abs(rpm-target)>2)s='Диск набирает обороты.';else if(Math.abs(difference)>.8)s='Рассинхронизация: '+(difference>0?'диск быстрее сигнала.':'диск медленнее сигнала.');else{const error=Math.min(fractions(rx-tx),1-fractions(rx-tx));s=error<.006?'Скорость и фаза совпали.':'Скорость совпала; фазу можно совместить кнопкой.';}q('status').textContent=s;}
+ const run=root.querySelector('[data-act="run"]');run.onclick=()=>{running=!running;run.textContent=running?'Пауза':(rpm>.5?'Продолжить':'Пуск');status();};
+ root.querySelector('[data-act="sync"]').onclick=()=>{target=nominal;rpm=nominal;rx=tx;phosphor.fill(0);q('speed').value=target;updateLabels();status();save();};
+ q('speed').oninput=()=>{target=Number(q('speed').value);updateLabels();};q('speed').onchange=save;
+ q('gain').oninput=()=>{gain=Number(q('gain').value)/100;updateLabels();};q('gain').onchange=save;
+ q('time').onchange=()=>{scale=Number(q('time').value);save();};q('pattern').onchange=()=>{makeSource();save();};
+ q('upload').onchange=()=>{const f=q('upload').files[0];if(!f)return;if(!f.type.startsWith('image/')){q('status').textContent='Нужен файл изображения.';return;}const reader=new FileReader();reader.onload=()=>{const im=new Image();im.onload=()=>{fileImage=im;q('pattern').querySelector('[value="image"]').hidden=false;q('pattern').value='image';makeSource();};im.onerror=()=>{q('status').textContent='Не удалось прочитать изображение.';};im.src=reader.result;};reader.readAsDataURL(f);};
+ 
+ readTheme();makeSource();try{applyState(JSON.parse(localStorage.getItem('nipkow-preferences-v1')||'null'));}catch{}
+ const observer=new MutationObserver(()=>readTheme());observer.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
+ function frame(t){if(!root.isConnected){observer.disconnect();return;}requestAnimationFrame(frame);const dt=last?Math.min(.06,(t-last)/1000):0;last=t;advance(dt);prepareScreenImage();drawDisc();drawScreen();drawWave();if(t-announced>450){updateLabels();status();announced=t;}drawn++;}
+ requestAnimationFrame(frame);
+ // Read-only inspection hook for checking the timing model, not part of the controls.
+ root.nipkowState=()=>({rpm,target,tx,rx,running,frameCount,drawn,gain,scale,energy:phosphor.reduce((a,b)=>a+b,0),source:Array.from(source),pixels:Array.from(phosphor)});
+})();
+</script>
