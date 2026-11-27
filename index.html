@@ -1522,8 +1522,9 @@ html>body{padding:0}</style>
   <div class="viz-controls">
     <button type="button" class="btn btn-primary" data-act="run">Пуск</button>
     <button type="button" class="btn" data-act="sync">Синхронизировать</button>
+    <button type="button" class="btn" data-act="reset">Сброс</button>
     <label class="form-label">Картинка
-      <select class="form-select" data-id="pattern"><option value="letter">Буква А</option><option value="face">Лицо</option><option value="bars">Полосы</option><option value="image" hidden>Своя картинка</option></select>
+      <select class="form-select" data-id="pattern"><option value="letter">Буква А</option><option value="face">Лицо</option><option value="bars">Полосы</option><option value="ashnu">Физтех — Ашню</option><option value="image" hidden>Своя картинка</option></select>
     </label>
     <label class="form-label">Своя картинка<input type="file" accept="image/*" class="form-control" data-id="upload"></label>
     <label class="form-label">Ход времени<select class="form-select" data-id="time"><option value="0.05">×0,05</option><option value="0.2" selected>×0,2</option><option value="1">×1</option></select></label>
@@ -1571,10 +1572,12 @@ html>body{background:var(--background)!important;}
  const cv={disc:q('disc'),screen:q('screen'),wave:q('wave')};
  const contexts=Object.fromEntries(Object.entries(cv).map(([k,c])=>[k,c.getContext('2d')]));
  const N=32,C=48,FPS=12.5,nominal=750,TAU=.16;
+ // Official simplified Ashnu symbol, sampled to the receiver's 48 x 32 grid.
+ const ASHNU=Uint8Array.from(atob('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASn4LAAALfjsAAAAAAC07AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABP//fn7/5wQAAAAAAFr/OwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH7/////fgAAAAAAAKb//zsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCmpqamFQAAAAAAAOf///87AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEIAQAAAAAAAAAC///////CwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADvR//8gAAAAAAAALf//////kQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALu/////8gAAAAAAAASv///////wsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC7//////87AAAAAAAABLv//////0oAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGz///////8VAAAAAAAAAAvn/////6YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC2w7bP////8AAAAAAAAAAABK//////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAbP///6YAAAAAAAAAAAAE//////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAApv///2wAAAAAAAAAAAAAkf////8LAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////zsAAAAAAAAAAAAAWv////8EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAV/////zs7bKb/534AAAAAWv////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7//////////////8AAAAAWv///+cAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABs//////////////8AAAAAfv///2wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACm//////+m5////9EAAAAE/////wsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////WgAAfv///5EAAAA7////pgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABX/////FQAAu////1oAAAS7////LQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADv/////AAAA/////yAAAH7////RAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGz///+mAAAg/////wQAbP///+cVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKb///9sAABK////0SCm////5xUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOf///87AAB+////5//////nFQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAC/////8VAAC7/////////9EVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALf////8AAAD////////ROwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWv///6YAACD///+mbBUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAApv///2wAAAs7FQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA57t+SgsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),ch=>ch.charCodeAt(0));
  const source=new Float32Array(N*C), phosphor=new Float32Array(N*C);
  const tiny=document.createElement('canvas');tiny.width=C;tiny.height=N;const tg=tiny.getContext('2d',{willReadFrequently:true});
  let running=false,rpm=0,target=750,gain=1,scale=.2,tx=0,rx=0,last=0,theme={},announced=0,drawn=0;
- let fileImage=null,frameCount=0;
+ let fileImage=null,frameCount=0,imageLoadVersion=0;
  const fractions=x=>((x%1)+1)%1;
  function readTheme(){const st=getComputedStyle(root);const probe=document.createElement('span');root.appendChild(probe);const v=(n,f)=>{probe.style.color='var('+n+','+f+')';return getComputedStyle(probe).color;};
  theme={bg:v('--background','Canvas'),fg:v('--foreground','CanvasText'),muted:v('--muted-foreground','GrayText'),surface:v('--muted','ButtonFace'),border:v('--border','GrayText'),signal:v('--viz-series-1','var(--blue,Highlight)'),font:st.fontFamily,base:parseFloat(st.getPropertyValue('--font-size-base'))||14};probe.remove();
@@ -1583,7 +1586,7 @@ html>body{background:var(--background)!important;}
  function colorRGB(css){const a=document.createElement('canvas').getContext('2d');a.fillStyle=css;a.fillRect(0,0,1,1);return Array.from(a.getImageData(0,0,1,1).data).slice(0,3);}
  function dimensions(c){const w=Math.max(160,c.clientWidth),h=c===cv.wave?52:w/1.15,dpr=Math.min(devicePixelRatio||1,2);if(c.width!==Math.round(w*dpr)||c.height!==Math.round(h*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);}const g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);return[w,h,g];}
  function save(){const state={modelContent:{pattern:q('pattern').value,targetRPM:target,signalPercent:Math.round(gain*100),timeScale:scale,lines:N},privateContent:null};try{localStorage.setItem('nipkow-preferences-v1',JSON.stringify(state));}catch{}}
- function applyState(state){const d=state?.modelContent;if(!d)return;target=Math.max(600,Math.min(900,Number(d.targetRPM)||750));gain=Math.max(0,Math.min(2,(Number.isFinite(Number(d.signalPercent)) ? Number(d.signalPercent) : 100)/100));scale=[.05,.2,1].includes(Number(d.timeScale))?Number(d.timeScale):.2;q('speed').value=target;q('gain').value=Math.round(gain*100);q('time').value=scale;if(['letter','face','bars'].includes(d.pattern))q('pattern').value=d.pattern;updateLabels();makeSource();}
+ function applyState(state){const d=state?.modelContent;if(!d)return;target=Math.max(600,Math.min(900,Number(d.targetRPM)||750));gain=Math.max(0,Math.min(2,(Number.isFinite(Number(d.signalPercent)) ? Number(d.signalPercent) : 100)/100));scale=[.05,.2,1].includes(Number(d.timeScale))?Number(d.timeScale):.2;q('speed').value=target;q('gain').value=Math.round(gain*100);q('time').value=scale;if(['letter','face','bars','ashnu'].includes(d.pattern))q('pattern').value=d.pattern;updateLabels();makeSource();}
  function updateLabels(){q('target').textContent=target.toLocaleString('ru-RU',{maximumFractionDigits:1});q('gainvalue').textContent=Math.round(gain*100);q('rpm').textContent=rpm.toLocaleString('ru-RU',{maximumFractionDigits:1})+' об/мин';}
  function makeSource(){
   tg.fillStyle='rgb(0,0,0)';tg.fillRect(0,0,C,N);tg.fillStyle='rgb(255,255,255)';
@@ -1591,6 +1594,8 @@ html>body{background:var(--background)!important;}
   if(p==='letter'){
    const rows=['0011100','0110110','1100011','1100011','1111111','1100011','1100011','1100011'];
    for(let y=0;y<8;y++)for(let x=0;x<7;x++)if(rows[y][x]==='1')tg.fillRect(10+x*4,4+y*3,4,3);
+  }else if(p==='ashnu'){
+   const pixels=tg.createImageData(C,N);for(let i=0;i<ASHNU.length;i++){pixels.data[i*4]=pixels.data[i*4+1]=pixels.data[i*4+2]=ASHNU[i];pixels.data[i*4+3]=255;}tg.putImageData(pixels,0,0);
   }else if(p==='face'){
    tg.beginPath();tg.ellipse(24,16,12,14,0,0,Math.PI*2);tg.fill();tg.fillStyle='rgb(0,0,0)';tg.fillRect(17,10,4,3);tg.fillRect(28,10,4,3);tg.fillRect(23,15,2,5);tg.fillRect(18,23,13,2);tg.fillRect(16,21,3,3);tg.fillRect(30,21,3,3);
   }else if(p==='bars'){
@@ -1639,10 +1644,15 @@ html>body{background:var(--background)!important;}
  function status(){const difference=rpm-nominal;let s;if(!running)s=rpm>.5?'Пауза.':'Диск остановлен.';else if(Math.abs(rpm-target)>2)s='Диск набирает обороты.';else if(Math.abs(difference)>.8)s='Рассинхронизация: '+(difference>0?'диск быстрее сигнала.':'диск медленнее сигнала.');else{const error=Math.min(fractions(rx-tx),1-fractions(rx-tx));s=error<.006?'Скорость и фаза совпали.':'Скорость совпала; фазу можно совместить кнопкой.';}q('status').textContent=s;}
  const run=root.querySelector('[data-act="run"]');run.onclick=()=>{running=!running;run.textContent=running?'Пауза':(rpm>.5?'Продолжить':'Пуск');status();};
  root.querySelector('[data-act="sync"]').onclick=()=>{target=nominal;rpm=nominal;rx=tx;phosphor.fill(0);q('speed').value=target;updateLabels();status();save();};
+ root.querySelector('[data-act="reset"]').onclick=()=>{
+  imageLoadVersion++;running=false;rpm=0;target=nominal;gain=1;scale=.2;tx=0;rx=0;last=0;frameCount=0;fileImage=null;
+  q('speed').value=target;q('gain').value=100;q('time').value=scale;q('pattern').value='letter';q('upload').value='';q('pattern').querySelector('[value="image"]').hidden=true;
+  run.textContent='Пуск';makeSource();updateLabels();status();save();
+ };
  q('speed').oninput=()=>{target=Number(q('speed').value);updateLabels();};q('speed').onchange=save;
  q('gain').oninput=()=>{gain=Number(q('gain').value)/100;updateLabels();};q('gain').onchange=save;
  q('time').onchange=()=>{scale=Number(q('time').value);save();};q('pattern').onchange=()=>{makeSource();save();};
- q('upload').onchange=()=>{const f=q('upload').files[0];if(!f)return;if(!f.type.startsWith('image/')){q('status').textContent='Нужен файл изображения.';return;}const reader=new FileReader();reader.onload=()=>{const im=new Image();im.onload=()=>{fileImage=im;q('pattern').querySelector('[value="image"]').hidden=false;q('pattern').value='image';makeSource();};im.onerror=()=>{q('status').textContent='Не удалось прочитать изображение.';};im.src=reader.result;};reader.readAsDataURL(f);};
+ q('upload').onchange=()=>{const f=q('upload').files[0];if(!f)return;const version=++imageLoadVersion;if(!f.type.startsWith('image/')){q('status').textContent='Нужен файл изображения.';return;}const reader=new FileReader();reader.onload=()=>{if(version!==imageLoadVersion)return;const im=new Image();im.onload=()=>{if(version!==imageLoadVersion)return;fileImage=im;q('pattern').querySelector('[value="image"]').hidden=false;q('pattern').value='image';makeSource();};im.onerror=()=>{q('status').textContent='Не удалось прочитать изображение.';};im.src=reader.result;};reader.readAsDataURL(f);};
  
  readTheme();makeSource();try{applyState(JSON.parse(localStorage.getItem('nipkow-preferences-v1')||'null'));}catch{}
  const observer=new MutationObserver(()=>readTheme());observer.observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});
